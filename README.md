@@ -1,23 +1,48 @@
 ## http_proxy_sse — универсальный HTTP‑прокси (Node.js) с агрегацией SSE
 
-Стек: Node.js + TypeScript (Express/Undici).  
+Стек: Node.js + TypeScript (Express + встроенный http/https).  
 Цель: предоставить простой прокси‑сервис, который:
 - Проксирует любые HTTP-запросы к целевому серверу.
-- Если целевой сервер отвечает Server-Sent Events (SSE, `text/event-stream`), прокси «собирает» поток целиком и возвращает клиенту финальный ответ одним ответом (без стриминга).
-- Подходит для случаев, когда клиенту неудобно/невозможно обрабатывать SSE (например, ограниченный рантайм, инструменты интеграции, простые тесты).
+- Если целевой сервер отвечает Server-Sent Events (SSE, `text/event-stream`), прокси «собирает» поток целиком и возвращает клиенту единый финальный ответ (не потоковый).
+- Удобен, когда клиент не может/не хочет обрабатывать SSE.
 
-### Ключевые требования и поведение
-- Прокси НИЧЕГО не добавляет к запросу клиента. Метод, URL, заголовки и тело передаются «как есть» (pass‑through).
-- Если ответ НЕ SSE (нет `text/event-stream` и тело не начинается с `data:`) — прокси возвращает статус, заголовки и тело ответа сервера БЕЗ изменений.
-- Если ответ SSE — прокси читает поток до конца и возвращает единый ответ:
-  - По умолчанию возвращается «сырой» текст полной SSE‑последовательности (все строки `data: ...`), как единое тело ответа.
-  - Статус ответа сохраняется (обычно 200). Заголовок `Content-Type` в этом режиме будет установлен в `text/plain; charset=utf-8` (так как это больше не поток SSE).
-  - Заголовки, специфичные для стриминга (например, `Cache-Control: no-cache`, `Connection: keep-alive`) в этом режиме не транслируются как есть, чтобы избежать некорректной семантики.
+### Особенности
+- **Прозрачный passthrough**: для не‑SSE ответов возвращается исходный статус/заголовки/тело без изменений.
+- **Агрегация SSE**: режимы `raw`, `final-text`, `smart` (выбор per‑request).
+- **Конфигурируемость**: `settings.json` для глобальных политик + пер‑запросные параметры в payload.
+- **Безопасность**: настройка TLS (`rejectUnauthorized`, `caFile`) и allowlist хостов апстрима.
+- **Контроль ресурсов**: лимиты размера/длительности SSE и таймауты.
+- **Инфраструктура**: CORS, health‑эндпоинты, готовые Windows‑скрипты, локальные тест‑сервер и клиент.
 
-Примечание: при необходимости можно расширить поведение, чтобы дополнительно предоставлять «разобранный» JSON (склейка `content.text` и т. п.). По умолчанию — возврат «сырого» полного SSE‑текста без постобработки.
+### Содержание
+- [Ключевые свойства](#ключевые-свойства)
+- [Определение SSE](#определение-sse)
+- [Формат API](#формат-api)
+- [Поведение агрегации SSE](#поведение-агрегации-sse)
+- [Примеры использования](#примеры-использования)
+- [Настройки (settings.json)](#настройки-settingsjson)
+- [Параметры запроса клиента (POST /proxy)](#параметры-запроса-клиента-post-proxy)
+- [Здоровье и CORS](#здоровье-и-cors)
+- [Установка](#установка)
+- [Скрипты npm](#скрипты-npm)
+- [Быстрый старт (Windows)](#быстрый-старт-windows)
+- [Структура проекта](#структура-проекта)
+- [Совместимость](#совместимость)
+- [Ограничения](#ограничения)
+- [Лицензия](#лицензия)
+
+### Ключевые свойства
+- Прокси не изменяет запрос клиента: метод, URL, заголовки и тело передаются «как есть» (pass‑through).
+- Не‑SSE ответ (нет `Content-Type: text/event-stream`) возвращается без изменений: исходный HTTP‑статус, заголовки и тело апстрима.
+- SSE ответ агрегируется до конца и возвращается одним ответом:
+  - `Content-Type` для агрегированного ответа — `text/plain; charset=utf-8` (по умолчанию, настраивается).
+  - Потоковые заголовки апстрима (keep‑alive/transfer‑encoding и т. п.) не переносятся.
+
+### Определение SSE
+- SSE определяется по заголовку `Content-Type` апстрима, содержащему `text/event-stream`.
 
 ### Формат API
-Прокси поднимает HTTP API, принимая универсальный JSON:
+Прокси поднимает HTTP API и принимает управляемый JSON в теле запроса.
 
 POST /proxy
 ```json
@@ -26,66 +51,135 @@ POST /proxy
   "url": "https://target.example.com/api",
   "headers": { "Authorization": "Bearer ..." },
   "body": { "any": "json" },
-  "timeout": 60
+  "timeout": 60,
+  "sse": { "aggregationMode": "raw|final-text|smart", "responseContentType": "text/plain; charset=utf-8" },
+  "tls": { "rejectUnauthorized": true }
 }
 ```
 
-Ответ (пример, если был SSE):
-```json
-{
-  "status": 200,
-  "headers": { "content-type": "text/plain; charset=utf-8" },
-  "body": "data: { ... }\n\ndata: { ... }\n\n... (полный SSE как текст)"
-}
-```
+Ответ:
+- Это непосредственный HTTP‑ответ прокси, сформированный на основе ответа апстрима:
+  - HTTP‑статус: как у апстрима.
+  - HTTP‑заголовки: как у апстрима (для не‑SSE); для SSE — только `Content-Type` агрегированного ответа.
+  - Тело: собственно тело ответа (без JSON‑обёртки `status/headers/body`).
 
-Ответ (если обычный JSON):
-```json
-{
-  "status": 200,
-  "headers": { "content-type": "application/json; charset=utf-8" },
-  "body": { "...": "..." }
-}
+Примеры (для наглядности):
+- Если апстрим вернул обычный JSON:
 ```
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
 
-Ответ (если обычный текст):
-```json
-{
-  "status": 200,
-  "headers": { "content-type": "text/plain; charset=utf-8" },
-  "body": "<строковый ответ>"
-}
+{"ok":true}
+```
+- Если апстрим вернул SSE, прокси вернёт агрегированный текст:
+```
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+
+data: { ... }\n\n
+data: { ... }\n\n...
 ```
 
 ### Поведение агрегации SSE
-- Определение SSE: `Content-Type` содержит `text/event-stream` ИЛИ тело начинается с `data:`.
-- Агрегация: читаем поток до закрытия соединения и склеиваем весь контент в один текст (включая все строки `data:`). Никакой дополнительной обработки содержимого не выполняется.
+- Режимы агрегации (переключаются per‑request, с дефолтом из settings):
+  - `raw` — вернуть «сырой» SSE‑текст: все строки `data:` склеены в один текст.
+  - `final-text` — попытка универсально собрать финальный `content.text` ассистента, корректно работая как с кумулятивными, так и с дельтовыми потоками.
+  - `smart` — эвристика, выбирающая лучшую версию финального текста (между кумулятивной и дельтовой стратегиями).
+- Таймауты/лимиты: можно ограничить время чтения, общий размер агрегата и действие при превышении (см. настройки).
 
 ### Примеры использования
-1) Проксирование SSE в единый текст (типичный чат-эндпоинт):
+1) Проксирование SSE‑чат‑эндпоинта в единый ответ:
 ```json
 {
   "method": "POST",
   "url": "https://code.1c.ai/chat_api/v1/conversations/{id}/messages",
   "headers": { "Authorization": "<token>", "Accept": "application/json" },
-  "body": { "tool_content": { "instruction": "Вопрос..." } }
+  "body": { "tool_content": { "instruction": "Вопрос..." } },
+  "sse": { "aggregationMode": "smart" }
+}
+```
+2) Обычный POST без SSE — прокси вернёт исходный JSON «как есть».
+
+### Настройки (settings.json)
+Глобальная конфигурация в `settings.json`.
+
+- listen.host (string, default: "localhost") — адрес, на котором слушает прокси
+- listen.port (number, default: 3002) — порт прокси
+- requestTimeoutDefault (number, seconds, default: 60) — таймаут запроса к апстриму по умолчанию
+- sseReadTimeoutDefault (number, seconds, default: 0) — таймаут чтения SSE (0 = без лимита)
+- sseMaxBodyBytes (number, bytes, default: 0) — максимальный размер агрегированного SSE‑тела (0 = без лимита)
+- sseMaxDurationSec (number, seconds, default: 0) — максимальная длительность агрегации SSE (0 = без лимита)
+- onLimit ("413" | "504" | "close", default: "504") — действие при превышении лимита
+  - "413" — вернуть 413 Payload Too Large
+  - "504" — вернуть 504 Gateway Timeout
+  - "close" — оборвать соединение
+- tls.rejectUnauthorized (boolean, default: true) — строгая проверка TLS сертификата апстрима
+- tls.caFile (string, default: "") — путь к дополнительному CA (опционально)
+- cors.enabled (boolean, default: false) — включить CORS
+- cors.allowedOrigins (string[] | "*", default: []) — список разрешённых Origin ("*" допустимо в dev)
+- limits.maxRequestBodyBytes (number, bytes, default: 0) — лимит размера тела входящего клиентского запроса (0 = без лимита)
+- upstream.allowedHosts (string[], default: []) — белый список хостов апстрима (пусто = разрешить любые)
+- health.enabled (boolean, default: true) — включить `/healthz` и `/ready`
+- health.paths.healthz (string, default: "/healthz") — путь health
+- health.paths.ready (string, default: "/ready") — путь ready
+- sse.responseContentType (string, default: "text/plain; charset=utf-8") — `Content-Type` агрегированного SSE‑ответа
+- sse.aggregationMode ("raw" | "final-text" | "smart", default: "raw") — дефолтный режим агрегации SSE
+
+Примечания к параметрам, присутствующим в `settings.json`, но пока не используемым реализацией:
+- logging.level, logging.maskAuthorization, logging.toFile, logging.filePath — зарезервировано (логирование не активно)
+- passthroughNonOK — зарезервировано (сейчас любые статусы отдаются «как есть»)
+- sse.dropStreamingHeaders, sse.preserveHeadersAllowlist — зарезервировано (при SSE переносим только `Content-Type`)
+- metrics.enabled — зарезервировано (метрик нет)
+
+Переменные окружения для переопределения настроек не поддерживаются — используйте `settings.json`.
+
+### Параметры запроса клиента (POST /proxy)
+Тело запроса клиента определяет конкретный апстрим‑вызов и может переопределить поведение на один запрос.
+
+```json
+{
+  "method": "GET|POST|PUT|PATCH|DELETE|...",          // обязательно
+  "url": "https://host/path?query#hash",               // обязательно, полный URL апстрима
+  "headers": { "Header-Name": "value" },             // опционально, по умолчанию {}
+  "body": <любой JSON/строка/бинарь>,                   // опционально; передаётся как есть
+  "timeout": 45,                                        // опционально; сек, перекрывает requestTimeoutDefault
+  "sse": {                                              // опционально; переопределяет настройки SSE
+    "aggregationMode": "raw|final-text|smart",         // как собирать поток; по умолчанию raw
+    "responseContentType": "text/plain; charset=utf-8" // content-type ответа при агрегировании
+  },
+  "tls": { "rejectUnauthorized": true }               // опционально; перекрывает глобальную TLS‑проверку
 }
 ```
 
-2) Обычный POST без SSE — прокси вернет исходный JSON как есть.
+Поведение ответа:
+- Не‑SSE: исходные HTTP‑статус, заголовки и тело апстрима без изменений (строгий passthrough).
+- SSE: поток агрегируется согласно `sse.aggregationMode`; ответ возвращается с HTTP‑статусом апстрима и `Content-Type`, заданным `sse.responseContentType`.
 
-### Настройки
-- PORT — порт HTTP‑прокси (по умолчанию 3002)
-- TIMEOUT — таймаут запроса (сек)
+### Здоровье и CORS
+- Health: `GET /healthz` → `ok`, `GET /ready` → `ready` (пути настраиваются).
+- CORS: включается и настраивается через `settings.cors.*`.
 
-### Запуск
-- Установка: `npm i`
-- Dev‑режим: `npm run dev`
-- Прод: `npm run build && npm start`
+### Установка
+- Требования: установленный Node.js (рекомендуется 18 LTS или выше) и npm.
+- Склонируйте репозиторий или скопируйте директорию `http_proxy_sse/` в ваш проект.
+- Перейдите в каталог `http_proxy_sse` и установите зависимости: `npm i`.
+- При необходимости отредактируйте `settings.json` (порт/хост, TLS, CORS, allowlist хостов, лимиты, health).
+- Запуск в dev: `npm run dev`. Продакшен: `npm run build && npm start`.
+- На Windows можно использовать скрипты `start-*.cmd`.
+
+### Скрипты npm
+- **dev**: запустить прокси в dev‑режиме (`ts-node src/index.ts`).
+- **build**: собрать TypeScript в `dist/` (`tsc -p .`).
+- **start**: запустить собранную версию (`node dist/index.js`).
+- **start:test-server**: локальный тестовый SSE/JSON‑сервер.
+- **start:test-client**: локальный клиент, проверяющий passthrough и SSE‑агрегацию.
 
 ### Быстрый старт (Windows)
+- Установка зависимостей: `npm i`
+- Dev‑режим: `npm run dev`
+- Прод: `npm run build && npm start`
 - Запуск прокси (dev): `start-proxy.cmd`
-- Запуск тестового SSE/JSON сервера (8081): `start-test-server.cmd`
+- Запуск тестового SSE/JSON сервера (порт берётся из `settings.test.serverPort`, по умолчанию 8081): `start-test-server.cmd`
 - Запуск тест‑клиента: `start-test-client.cmd`
 
 ### Структура проекта
@@ -97,105 +191,23 @@ http_proxy_sse/
   tsconfig.json
   free-ports.cmd               # Освобождение портов 3002 и 8081
   start-proxy.cmd              # Быстрый запуск прокси (dev)
-  start-test-server.cmd        # Запуск тестового SSE/JSON сервера (8081)
+  start-test-server.cmd        # Запуск тестового SSE/JSON сервера
   start-test-client.cmd        # Запуск тест‑клиента
   src/
-    index.ts                   # Реализация POST /proxy (passthrough + SSE-агрегация)
+    index.ts                   # Реализация POST /proxy (passthrough + SSE‑агрегация)
   test/
-    server.ts                  # Простой SSE/JSON апстрим на 8081
+    server.ts                  # Простой SSE/JSON апстрим
     client.ts                  # Клиент, проверяющий JSON и SSE через прокси
 ```
 
-### Настройки (settings.json / env)
-Все параметры прокси разделены на глобальные политики (settings) и per‑request значения (в payload клиента).
-
-- listen.host (string, default: "localhost") — адрес, на котором слушает прокси
-- listen.port (number, default: 8088) — порт прокси
-- requestTimeoutDefault (number, seconds, default: 60) — таймаут запроса по умолчанию
-- sseReadTimeoutDefault (number, seconds, default: 0) — таймаут чтения SSE (0 = без лимита)
-- sseMaxBodyBytes (number, bytes, default: 0) — максимальный размер агрегированного SSE‑тела (0 = без лимита)
-- sseMaxDurationSec (number, seconds, default: 0) — максимальная длительность агрегации SSE (0 = без лимита)
-- onLimit ("413" | "504" | "close", default: "504") — действие при превышении лимита
-  - "413" — вернуть 413 Payload Too Large
-  - "504" — вернуть 504 Gateway Timeout
-  - "close" — оборвать соединение
-- tls.rejectUnauthorized (boolean, default: true) — строгая проверка TLS сертификата апстрима
-- tls.caFile (string, path, default: "") — путь к дополнительному CA (опционально)
-- cors.enabled (boolean, default: false) — включить CORS
-- cors.allowedOrigins (string[] | "*", default: []) — список разрешённых Origin ("*" допустимо в dev)
-- logging.level ("silent" | "error" | "warn" | "info" | "debug", default: "info") — уровень логов
-- logging.maskAuthorization (boolean, default: true) — маскировать заголовок Authorization в логах
-- logging.toFile (boolean, default: false) — писать логи в файл
-- logging.filePath (string, default: "./proxy.log") — путь к лог‑файлу
-- passthroughNonOK (boolean, default: true) — 4xx/5xx от апстрима отдаются без изменений
-- sse.responseContentType (string, default: "text/plain; charset=utf-8") — `Content-Type` агрегированного SSE ответа
-- sse.dropStreamingHeaders (boolean, default: true) — не переносить потоковые заголовки (keep‑alive, transfer‑encoding)
-- sse.preserveHeadersAllowlist (string[], default: []) — allowlist заголовков, которые можно сохранить при SSE‑агрегации
-- upstream.allowedHosts (string[], default: []) — белый список хостов апстрима (пусто = разрешить все)
-- limits.maxRequestBodyBytes (number, bytes, default: 0) — лимит размера тела входящего клиентского запроса (0 = без лимита)
-- health.enabled (boolean, default: true) — включить `/healthz` и `/ready`
-- health.paths.healthz (string, default: "/healthz") — путь health
-- health.paths.ready (string, default: "/ready") — путь ready
-- metrics.enabled (boolean, default: false) — включить метрики (опционально)
-
-Переменные окружения (опционально) могут переопределять значения settings, например:
-- PROXY_HOST, PROXY_PORT
-- REQUEST_TIMEOUT_DEFAULT, SSE_READ_TIMEOUT_DEFAULT
-- SSE_MAX_BODY_BYTES, SSE_MAX_DURATION_SEC, ON_LIMIT
-- TLS_REJECT_UNAUTHORIZED, TLS_CA_FILE
-- CORS_ENABLED, CORS_ALLOWED_ORIGINS
-- LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, LOG_MASK_AUTH
-- PASSTHROUGH_NON_OK
-- SSE_RESPONSE_CONTENT_TYPE, SSE_DROP_STREAMING_HEADERS, SSE_PRESERVE_HEADERS
-- UPSTREAM_ALLOWED_HOSTS
-- LIMITS_MAX_REQUEST_BODY_BYTES
-- HEALTH_ENABLED, HEALTH_PATH, READY_PATH
-- METRICS_ENABLED
-
-### Параметры запроса клиента (POST /proxy)
-Тело запроса клиента определяет конкретный апстрим‑вызов и может переопределить таймаут на один запрос.
-
-```json
-{
-  "method": "GET|POST|PUT|PATCH|DELETE|...",          // обязательно
-  "url": "https://host/path?query#hash",               // обязательно, полный URL апстрима
-  "headers": { "Header-Name": "value", ... },        // опционально, по умолчанию {}
-  "body": <любой JSON/строка/бинарь>,                   // опционально; передаётся как есть
-  "timeout": 45,                                        // опционально; сек, перекрывает requestTimeoutDefault
-  "sse": {                                              // опционально; переопределяет настройки SSE
-    "aggregationMode": "raw|final-text|smart",         // как собирать поток; по умолчанию raw
-    "responseContentType": "text/plain; charset=utf-8" // content-type ответа при агрегировании
-  },
-  "tls": { "rejectUnauthorized": true }               // опционально; перекрывает глобальную TLS проверку
-}
-```
-
-Поведение ответа:
-- НЕ‑SSE: возвращаются исходные `status`, `headers`, `body` апстрима без изменений (строгий passthrough).
-- SSE: поток обрабатывается согласно `sse.aggregationMode`:
-  - `raw` — вернуть «сырой» SSE‑текст (все строки `data:` как есть, склеенные прокси)
-  - `final-text` — универсально собрать финальный `content.text` ассистента (поддерживает кумулятивные и дельтовые потоки)
-  - `smart` — эвристика: выбирает лучшую версию между кумулятивной и дельтовой сборкой
-  Ответ отдаётся с тем же `status` апстрима и `Content-Type` из `sse.responseContentType` (по умолчанию `text/plain; charset=utf-8`). Потоковые заголовки не переносятся.
-
-### Пример вызова с per‑request параметрами
-```json
-{
-  "method": "POST",
-  "url": "https://code.1c.ai/chat_api/v1/conversations/{id}/messages",
-  "headers": { "Authorization": "<token>", "Accept": "application/json" },
-  "body": { "tool_content": { "instruction": "Вопрос..." } },
-  "timeout": 60,
-  "sse": { "aggregationMode": "final-text" },
-  "tls": { "rejectUnauthorized": true }
-}
-```
+### Совместимость
+- Node.js: рекомендуется версия 18 LTS и выше (проект использует `ts-node` и встроенные `http/https`).
 
 ### Ограничения
-- Прокси не выполняет аутентификацию пользователя; безопасность заголовков — зона ответственности вызывающей стороны.
-- Для больших SSE потоков рекомендуется лимитировать размер и время агрегации.
+- Прокси не выполняет аутентификацию; безопасность заголовков — ответственность вызывающей стороны.
+- Для больших SSE‑потоков рекомендуется лимитировать размер и время агрегации.
 
----
-Далее: создадим структуру Node.js/TS проекта (`package.json`, `tsconfig.json`, `src/index.ts`) и реализуем универсальный `/proxy` с агрегацией SSE.
+### Лицензия
+MIT. Добавьте файл `LICENSE` при публикации.
 
 
