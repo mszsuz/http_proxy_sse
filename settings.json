@@ -16,17 +16,8 @@
     "enabled": false,
     "allowedOrigins": []
   },
-  "logging": {
-    "level": "info",
-    "maskAuthorization": true,
-    "toFile": false,
-    "filePath": "./proxy.log"
-  },
-  "passthroughNonOK": true,
   "sse": {
     "responseContentType": "text/plain; charset=utf-8",
-    "dropStreamingHeaders": true,
-    "preserveHeadersAllowlist": [],
     "aggregationMode": "raw"
   },
   "upstream": {
@@ -41,9 +32,6 @@
       "healthz": "/healthz",
       "ready": "/ready"
     }
-  },
-  "metrics": {
-    "enabled": false
   },
   "test": {
     "serverHost": "localhost",

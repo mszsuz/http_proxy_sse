@@ -92,7 +92,7 @@ data: { ... }\n\n...
 ```json
 {
   "method": "POST",
-  "url": "https://code.1c.ai/chat_api/v1/conversations/{id}/messages",
+  "url": "https://upstream.example.com/chat_api/v1/conversations/{id}/messages",
   "headers": { "Authorization": "<token>", "Accept": "application/json" },
   "body": { "tool_content": { "instruction": "Вопрос..." } },
   "sse": { "aggregationMode": "smart" }
@@ -124,12 +124,6 @@ data: { ... }\n\n...
 - health.paths.ready (string, default: "/ready") — путь ready
 - sse.responseContentType (string, default: "text/plain; charset=utf-8") — `Content-Type` агрегированного SSE‑ответа
 - sse.aggregationMode ("raw" | "final-text" | "smart", default: "raw") — дефолтный режим агрегации SSE
-
-Примечания к параметрам, присутствующим в `settings.json`, но пока не используемым реализацией:
-- logging.level, logging.maskAuthorization, logging.toFile, logging.filePath — зарезервировано (логирование не активно)
-- passthroughNonOK — зарезервировано (сейчас любые статусы отдаются «как есть»)
-- sse.dropStreamingHeaders, sse.preserveHeadersAllowlist — зарезервировано (при SSE переносим только `Content-Type`)
-- metrics.enabled — зарезервировано (метрик нет)
 
 Переменные окружения для переопределения настроек не поддерживаются — используйте `settings.json`.
 

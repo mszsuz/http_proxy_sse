@@ -15,13 +15,10 @@ type Settings = {
   onLimit: '413' | '504' | 'close';
   tls: { rejectUnauthorized: boolean; caFile: string };
   cors: { enabled: boolean; allowedOrigins: string[] | '*'};
-  logging: { level: string; maskAuthorization: boolean; toFile: boolean; filePath: string };
-  passthroughNonOK: boolean;
-  sse: { responseContentType: string; dropStreamingHeaders: boolean; preserveHeadersAllowlist: string[] };
+  sse: { responseContentType: string; aggregationMode?: 'raw' | 'final-text' | 'smart' };
   upstream: { allowedHosts: string[] };
   limits: { maxRequestBodyBytes: number };
   health: { enabled: boolean; paths: { healthz: string; ready: string } };
-  metrics: { enabled: boolean };
 };
 
 function readSettings(): Settings {
@@ -59,19 +56,7 @@ if (settings.health.enabled) {
   app.get(settings.health.paths.ready, (_req, res) => res.send('ready'));
 }
 
-function maskAuth(h: any) {
-  if (!settings.logging.maskAuthorization) return h;
-  const out: Record<string, string> = {};
-  Object.keys(h || {}).forEach(k => {
-    if (k.toLowerCase() === 'authorization') {
-      const v = String(h[k] ?? '');
-      out[k] = v.length <= 10 ? '***' : `${v.slice(0,6)}…${v.slice(-4)}`;
-    } else {
-      out[k] = String(h[k]);
-    }
-  });
-  return out;
-}
+// logging/masking не используется
 
 function allowedHost(u: URL): boolean {
   const wl = settings.upstream.allowedHosts || [];
