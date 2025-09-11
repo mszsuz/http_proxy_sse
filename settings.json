@@ -1,0 +1,54 @@
+{
+  "listen": {
+    "host": "localhost",
+    "port": 3002
+  },
+  "requestTimeoutDefault": 60,
+  "sseReadTimeoutDefault": 0,
+  "sseMaxBodyBytes": 0,
+  "sseMaxDurationSec": 0,
+  "onLimit": "504",
+  "tls": {
+    "rejectUnauthorized": true,
+    "caFile": ""
+  },
+  "cors": {
+    "enabled": false,
+    "allowedOrigins": []
+  },
+  "logging": {
+    "level": "info",
+    "maskAuthorization": true,
+    "toFile": false,
+    "filePath": "./proxy.log"
+  },
+  "passthroughNonOK": true,
+  "sse": {
+    "responseContentType": "text/plain; charset=utf-8",
+    "dropStreamingHeaders": true,
+    "preserveHeadersAllowlist": [],
+    "aggregationMode": "raw"
+  },
+  "upstream": {
+    "allowedHosts": []
+  },
+  "limits": {
+    "maxRequestBodyBytes": 0
+  },
+  "health": {
+    "enabled": true,
+    "paths": {
+      "healthz": "/healthz",
+      "ready": "/ready"
+    }
+  },
+  "metrics": {
+    "enabled": false
+  },
+  "test": {
+    "serverHost": "localhost",
+    "serverPort": 8081
+  }
+}
+
+
