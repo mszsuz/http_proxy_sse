@@ -1,0 +1,31 @@
+# Используем официальный Node.js образ
+FROM node:18-alpine
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Копируем package.json и package-lock.json
+COPY package*.json ./
+
+# Копируем tsconfig для тестов
+COPY tsconfig.test.json ./tsconfig.json
+
+# Устанавливаем зависимости (включая dev зависимости для ts-node)
+RUN npm ci
+
+# Копируем необходимые файлы
+COPY test/client.ts ./test/
+
+# Компилируем TypeScript
+RUN npx tsc -p .
+
+# Создаем непривилегированного пользователя
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Меняем владельца файлов
+RUN chown -R nextjs:nodejs /app
+USER nextjs
+
+# Команда запуска тестового клиента
+CMD ["node", "dist/test/client.js"]

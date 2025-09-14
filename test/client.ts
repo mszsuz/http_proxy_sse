@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const settings = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '..', 'settings.json'), 'utf8')
+  fs.readFileSync(path.resolve(__dirname, '..', '..', 'settings.json'), 'utf8')
 );
 const PROXY_PORT = settings?.listen?.port || 3002;
 const TEST_HOST = settings?.test?.serverHost || 'localhost';
@@ -12,7 +12,7 @@ const TEST_PORT = settings?.test?.serverPort || 8081;
 function post(path: string, body: any, cb: (code: number, headers: any, text: string) => void) {
   const data = Buffer.from(JSON.stringify(body));
   const req = http.request({
-    hostname: 'localhost', port: PROXY_PORT, path, method: 'POST',
+    hostname: process.env.PROXY_HOST || 'localhost', port: PROXY_PORT, path, method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Length': data.length

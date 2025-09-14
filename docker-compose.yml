@@ -1,0 +1,56 @@
+name: http-proxy-sse
+
+services:
+  # Основной HTTP Proxy SSE сервис
+  proxy:
+    build: .
+    container_name: http-proxy-sse
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./settings.json:/app/settings.json:ro
+    networks:
+      - proxy-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3002/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Тестовый сервер для проверки функциональности
+  test-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-server
+    container_name: test-server
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./settings.json:/app/settings.json:ro
+    networks:
+      - proxy-network
+    restart: unless-stopped
+
+  # Тестовый клиент (запускается один раз для проверки)
+  test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client
+    container_name: test-client
+    environment:
+      - PROXY_HOST=proxy
+    volumes:
+      - ./settings.json:/app/settings.json:ro
+    depends_on:
+      - proxy
+      - test-server
+    networks:
+      - proxy-network
+    restart: "no"
+
+networks:
+  proxy-network:
+    driver: bridge

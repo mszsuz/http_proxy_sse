@@ -3,10 +3,10 @@ import fs from 'fs';
 import path from 'path';
 
 const settings = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, '..', 'settings.json'), 'utf8')
+  fs.readFileSync(path.resolve(__dirname, '..', '..', 'settings.json'), 'utf8')
 );
 const PORT = settings?.test?.serverPort || 8081;
-const HOST = settings?.test?.serverHost || 'localhost';
+const HOST = '0.0.0.0';
 
 const server = http.createServer((req, res) => {
   if (req.url === '/sse' && req.method === 'GET') {

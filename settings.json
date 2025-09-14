@@ -1,6 +1,6 @@
 {
   "listen": {
-    "host": "localhost",
+    "host": "0.0.0.0",
     "port": 3002
   },
   "requestTimeoutDefault": 60,
@@ -21,7 +21,7 @@
     "aggregationMode": "raw"
   },
   "upstream": {
-    "allowedHosts": []
+    "allowedHosts": ["localhost", "test-server", "host.docker.internal"]
   },
   "limits": {
     "maxRequestBodyBytes": 0
@@ -34,7 +34,7 @@
     }
   },
   "test": {
-    "serverHost": "localhost",
+    "serverHost": "test-server",
     "serverPort": 8081
   }
 }
